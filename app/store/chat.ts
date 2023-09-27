@@ -13,7 +13,7 @@ import {
   StoreKey,
   SUMMARIZE_MODEL,
 } from "../constant";
-import { api, RequestMessage } from "../client/api";
+import { api, FunctionCall, RequestMessage } from "../client/api";
 import { ChatControllerPool } from "../client/controller";
 import { prettyObject } from "../utils/format";
 import { estimateTokenLength } from "../utils/token";
@@ -26,6 +26,10 @@ export type ChatMessage = RequestMessage & {
   isError?: boolean;
   id: string;
   model?: ModelType;
+  // function_call的存储
+  function_call?: FunctionCall;
+  // 调用api返回的相应数据
+  function_response?: string;
 };
 
 export function createMessage(override: Partial<ChatMessage>): ChatMessage {
@@ -98,7 +102,7 @@ interface ChatStore {
   currentSession: () => ChatSession;
   nextSession: (delta: number) => void;
   onNewMessage: (message: ChatMessage) => void;
-  onUserInput: (content: string) => Promise<void>;
+  onUserInput: ({ content }: { content: string }) => Promise<void>;
   summarizeSession: () => void;
   updateStat: (message: ChatMessage) => void;
   updateCurrentSession: (updater: (session: ChatSession) => void) => void;
@@ -291,17 +295,36 @@ export const useChatStore = createPersistStore(
         get().summarizeSession();
       },
 
-      async onUserInput(content: string) {
+      async onUserInput({
+        content,
+        function_name,
+        function_arguments,
+        function_response,
+      }: {
+        content: string;
+        function_name?: string;
+        function_arguments?: string;
+        function_response?: string;
+      }) {
+        console.log("正在发送消息: ", content);
+        // 当前会话的完整数据
         const session = get().currentSession();
+        console.log("[User Input] before session: ", session);
         const modelConfig = session.mask.modelConfig;
 
         const userContent = fillTemplateWith(content, modelConfig);
         console.log("[User Input] after template: ", userContent);
 
-        const userMessage: ChatMessage = createMessage({
-          role: "user",
-          content: userContent,
-        });
+        const userMessage: ChatMessage = !function_name
+          ? createMessage({
+              role: "user",
+              content: userContent,
+            })
+          : createMessage({
+              role: "function",
+              name: function_name,
+              content: function_response,
+            });
 
         const botMessage: ChatMessage = createMessage({
           role: "assistant",
@@ -309,10 +332,18 @@ export const useChatStore = createPersistStore(
           model: modelConfig.model,
         });
 
+        console.log("[User Input] after message: ", userMessage, botMessage);
+
         // get recent messages
         const recentMessages = get().getMessagesWithMemory();
         const sendMessages = recentMessages.concat(userMessage);
         const messageIndex = get().currentSession().messages.length + 1;
+
+        console.log(
+          "[User Input] after recent messages: ",
+          recentMessages,
+          sendMessages,
+        );
 
         // save user's and bot's message
         get().updateCurrentSession((session) => {
@@ -330,21 +361,34 @@ export const useChatStore = createPersistStore(
         api.llm.chat({
           messages: sendMessages,
           config: { ...modelConfig, stream: true },
-          onUpdate(message) {
+          onUpdate({ message, function_name, function_arguments }) {
             botMessage.streaming = true;
             if (message) {
               botMessage.content = message;
+            }
+            if (function_name) {
+              botMessage.function_call = {
+                name: function_name,
+                arguments: function_arguments || "",
+              };
             }
             get().updateCurrentSession((session) => {
               session.messages = session.messages.concat();
             });
           },
-          onFinish(message) {
+          onFinish({ message, function_name, function_arguments }) {
             botMessage.streaming = false;
             if (message) {
               botMessage.content = message;
-              get().onNewMessage(botMessage);
             }
+            if (function_name) {
+              botMessage.function_call = {
+                name: function_name,
+                arguments: function_arguments || "",
+              };
+            }
+            if (botMessage.content || botMessage.function_call)
+              get().onNewMessage(botMessage);
             ChatControllerPool.remove(session.id, botMessage.id);
           },
           onError(error) {
@@ -520,7 +564,7 @@ export const useChatStore = createPersistStore(
             config: {
               model: getSummarizeModel(session.mask.modelConfig.model),
             },
-            onFinish(message) {
+            onFinish({ message }) {
               get().updateCurrentSession(
                 (session) =>
                   (session.topic =
@@ -577,10 +621,10 @@ export const useChatStore = createPersistStore(
               stream: true,
               model: getSummarizeModel(session.mask.modelConfig.model),
             },
-            onUpdate(message) {
+            onUpdate({ message }) {
               session.memoryPrompt = message;
             },
-            onFinish(message) {
+            onFinish({ message }) {
               console.log("[Memory] ", message);
               session.lastSummarizeIndex = lastSummarizeIndex;
             },

@@ -34,6 +34,7 @@ import AutoIcon from "../icons/auto.svg";
 import BottomIcon from "../icons/bottom.svg";
 import StopIcon from "../icons/pause.svg";
 import RobotIcon from "../icons/robot.svg";
+import ShareIcon from "../icons/share.svg";
 
 import {
   ChatMessage,
@@ -89,6 +90,8 @@ import { ChatCommandPrefix, useChatCommand, useCommand } from "../command";
 import { prettyObject } from "../utils/format";
 import { ExportMessageModal } from "./exporter";
 import { getClientConfig } from "../config/client";
+import { api } from "@/app/client/api";
+import { Loading } from "@/app/components/home";
 
 const Markdown = dynamic(async () => (await import("./markdown")).Markdown, {
   loading: () => <LoadingIcon />,
@@ -416,6 +419,7 @@ export function ChatActions(props: {
 
   // switch themes
   const theme = config.theme;
+
   function nextTheme() {
     const themes = [Theme.Auto, Theme.Light, Theme.Dark];
     const themeIndex = themes.indexOf(theme);
@@ -600,10 +604,13 @@ export function EditMessageModal(props: { onClose: () => void }) {
 }
 
 function _Chat() {
-  type RenderMessage = ChatMessage & { preview?: boolean };
+  type RenderMessage = ChatMessage & {
+    preview?: boolean;
+  };
 
   const chatStore = useChatStore();
   const session = chatStore.currentSession();
+  // console.log('当前session：\n', session);
   const config = useAppConfig();
   const fontSize = config.fontSize;
 
@@ -684,8 +691,22 @@ function _Chat() {
     }
   };
 
-  const doSubmit = (userInput: string) => {
-    if (userInput.trim() === "") return;
+  // 消息发送
+  const doSubmit = ({
+    userInput,
+    function_name,
+    function_arguments,
+    function_response,
+  }: {
+    userInput: string;
+    function_name?: string;
+    function_arguments?: string;
+    function_response?: string;
+  }) => {
+    if (userInput.trim() === "") {
+      showToast("消息？");
+      return;
+    }
     const matchCommand = chatCommands.match(userInput);
     if (matchCommand.matched) {
       setUserInput("");
@@ -694,7 +715,14 @@ function _Chat() {
       return;
     }
     setIsLoading(true);
-    chatStore.onUserInput(userInput).then(() => setIsLoading(false));
+    chatStore
+      .onUserInput({
+        content: userInput,
+        function_name,
+        function_arguments,
+        function_response,
+      })
+      .then(() => setIsLoading(false));
     localStorage.setItem(LAST_INPUT_KEY, userInput);
     setUserInput("");
     setPromptHints([]);
@@ -734,8 +762,9 @@ function _Chat() {
             m.streaming = false;
           }
 
-          if (m.content.length === 0) {
+          if (m.content.length === 0 && !m.function_call) {
             m.isError = true;
+            console.log("被设定为有问题的返回数据");
             m.content = prettyObject({
               error: true,
               message: "empty response",
@@ -766,7 +795,7 @@ function _Chat() {
       return;
     }
     if (shouldSubmit(e) && promptHints.length === 0) {
-      doSubmit(userInput);
+      doSubmit({ userInput: userInput });
       e.preventDefault();
     }
   };
@@ -842,7 +871,9 @@ function _Chat() {
 
     // resend the message
     setIsLoading(true);
-    chatStore.onUserInput(userMessage.content).then(() => setIsLoading(false));
+    chatStore
+      .onUserInput({ content: userMessage.content })
+      .then(() => setIsLoading(false));
     inputRef.current?.focus();
   };
 
@@ -916,6 +947,7 @@ function _Chat() {
   const [msgRenderIndex, _setMsgRenderIndex] = useState(
     Math.max(0, renderMessages.length - CHAT_PAGE_SIZE),
   );
+
   function setMsgRenderIndex(newIndex: number) {
     newIndex = Math.min(renderMessages.length - CHAT_PAGE_SIZE, newIndex);
     newIndex = Math.max(0, newIndex);
@@ -929,6 +961,8 @@ function _Chat() {
     );
     return renderMessages.slice(msgRenderIndex, endRenderIndex);
   }, [msgRenderIndex, renderMessages]);
+
+  console.log("[Chat] render messages: ", messages);
 
   const onChatBodyScroll = (e: HTMLElement) => {
     const bottomHeight = e.scrollTop + e.clientHeight;
@@ -973,7 +1007,7 @@ function _Chat() {
   useCommand({
     fill: setUserInput,
     submit: (text) => {
-      doSubmit(text);
+      doSubmit({ userInput: text });
     },
     code: (text) => {
       console.log("[Command] got code from url: ", text);
@@ -1031,6 +1065,48 @@ function _Chat() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const [call_function_loading, setCallFunctionLoading] = useState(false);
+  // 调用function call
+  const callFunction = async ({
+    id,
+    name,
+    arguments: _arguments,
+  }: {
+    id: string;
+    name: string;
+    arguments: string;
+  }) => {
+    setCallFunctionLoading(true);
+    const call = await api.function_call({ name: name, arguments: _arguments });
+    // 将结果保存为function_response
+    chatStore.updateCurrentSession((session) => {
+      const m = session.mask.context
+        .concat(session.messages)
+        .find((m) => m.id === id);
+      if (m && m.function_call && m.function_call.name) {
+        m.function_response = JSON.stringify(call, null, 4);
+        // 执行GPT
+        doSubmit({
+          userInput: JSON.stringify(call, null, 4),
+          function_name: m.function_call.name,
+          function_arguments: m.function_call.arguments,
+          function_response: m.function_response,
+        });
+      }
+    });
+    setCallFunctionLoading(false);
+  };
+
+  // 检查是否为json结构体
+  const isJson = (str: string) => {
+    try {
+      JSON.parse(str);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
 
   return (
     <div className={styles.chat} key={session.id}>
@@ -1114,6 +1190,10 @@ function _Chat() {
         {messages.map((message, i) => {
           const isUser = message.role === "user";
           const isContext = i < context.length;
+          const isFunction =
+            !!(message.function_call && message.function_call.name) || false;
+          const functionCallType = "";
+          // TODO 转化对应的function为对应的插件
           const showActions =
             i > 0 &&
             !(message.preview || message.content.length === 0) &&
@@ -1133,11 +1213,18 @@ function _Chat() {
                   <div className={styles["chat-message-header"]}>
                     <div className={styles["chat-message-avatar"]}>
                       <div className={styles["chat-message-edit"]}>
+                        {/*编辑按钮*/}
                         <IconButton
                           icon={<EditIcon />}
                           onClick={async () => {
                             const newMessage = await showPrompt(
-                              Locale.Chat.Actions.Edit,
+                              `${Locale.Chat.Actions.Edit} ${
+                                isFunction
+                                  ? `函数预处理(${
+                                      message?.function_call?.name || ""
+                                    })`
+                                  : ""
+                              }`,
                               message.content,
                               10,
                             );
@@ -1145,8 +1232,20 @@ function _Chat() {
                               const m = session.mask.context
                                 .concat(session.messages)
                                 .find((m) => m.id === message.id);
-                              if (m) {
+                              if (m && !m.function_call) {
                                 m.content = newMessage;
+                              } else if (
+                                m &&
+                                m.function_call &&
+                                m.function_call.name
+                              ) {
+                                try {
+                                  JSON.parse(newMessage);
+                                  m.function_call.arguments = newMessage;
+                                } catch (e) {
+                                  console.log("编辑的内容不是json格式");
+                                  showToast("编辑的内容不是json格式？");
+                                }
                               }
                             });
                           }}
@@ -1159,6 +1258,7 @@ function _Chat() {
                       )}
                     </div>
 
+                    {/*显示悬浮按钮！*/}
                     {showActions && (
                       <div className={styles["chat-message-actions"]}>
                         <div className={styles["chat-input-actions"]}>
@@ -1205,7 +1305,14 @@ function _Chat() {
                   )}
                   <div className={styles["chat-message-item"]}>
                     <Markdown
-                      content={message.content}
+                      content={
+                        isFunction
+                          ? "```\n" + message?.function_call?.arguments ||
+                            "" + "\n```"
+                          : isJson(message.content)
+                          ? "```\n" + message.content + "\n```"
+                          : message.content
+                      }
                       loading={
                         (message.preview || message.streaming) &&
                         message.content.length === 0 &&
@@ -1220,6 +1327,44 @@ function _Chat() {
                       parentRef={scrollRef}
                       defaultShow={i >= messages.length - 6}
                     />
+                    {isFunction && (
+                      <>
+                        <div className={styles["chat-function-call-item"]}>
+                          {!message?.function_response ? "即将运行" : ""}函数：
+                          {message?.function_call?.name || ""}
+                        </div>
+                        {!message?.function_response && (
+                          <>
+                            {call_function_loading ? (
+                              <Loading />
+                            ) : (
+                              <div
+                                className={styles["chat-function-call-item"]}
+                                onClick={() =>
+                                  callFunction({
+                                    id: message.id,
+                                    name: message?.function_call?.name || "",
+                                    arguments:
+                                      message?.function_call?.arguments || "",
+                                  })
+                                }
+                              >
+                                <div
+                                  className={
+                                    styles["chat-function-call-button"]
+                                  }
+                                >
+                                  <ShareIcon />{" "}
+                                  <span style={{ paddingLeft: `4px` }}>
+                                    确认运行
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
                   </div>
 
                   <div className={styles["chat-message-action-date"]}>
@@ -1275,7 +1420,7 @@ function _Chat() {
             text={Locale.Chat.Send}
             className={styles["chat-input-send"]}
             type="primary"
-            onClick={() => doSubmit(userInput)}
+            onClick={() => doSubmit({ userInput: userInput })}
           />
         </div>
       </div>

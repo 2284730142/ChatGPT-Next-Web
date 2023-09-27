@@ -49,10 +49,22 @@ export class ChatGPTApi implements LLMApi {
   }
 
   async chat(options: ChatOptions) {
-    const messages = options.messages.map((v) => ({
-      role: v.role,
-      content: v.content,
-    }));
+    const messages = options.messages.map((v) => {
+      // @ts-ignore
+      if (v.function_call) {
+        return {
+          role: v.role,
+          // @ts-ignore
+          content: v.function_call.arguments,
+          ...(v.name ? { name: v.name } : {}),
+        };
+      }
+      return {
+        role: v.role,
+        content: v.content,
+        ...(v.name ? { name: v.name } : {}),
+      };
+    });
 
     const modelConfig = {
       ...useAppConfig.getState().modelConfig,
@@ -70,6 +82,24 @@ export class ChatGPTApi implements LLMApi {
       presence_penalty: modelConfig.presence_penalty,
       frequency_penalty: modelConfig.frequency_penalty,
       top_p: modelConfig.top_p,
+      function_call: "auto",
+      functions: [
+        {
+          name: "get_current_weather",
+          description: "Get the current weather in a given location",
+          parameters: {
+            type: "object",
+            properties: {
+              location: {
+                type: "string",
+                description: "The city and state, e.g. San Francisco, CA",
+              },
+              unit: { type: "string", enum: ["celsius", "fahrenheit"] },
+            },
+            required: ["location"],
+          },
+        },
+      ],
     };
 
     console.log("[Request] openai payload: ", requestPayload);
@@ -95,11 +125,18 @@ export class ChatGPTApi implements LLMApi {
 
       if (shouldStream) {
         let responseText = "";
+        let functionName = "";
+        let functionArguments = "";
         let finished = false;
 
         const finish = () => {
           if (!finished) {
-            options.onFinish(responseText);
+            // TODO function call 接入 非Stream版本
+            options.onFinish({
+              message: responseText,
+              function_name: functionName,
+              function_arguments: functionArguments,
+            });
             finished = true;
           }
         };
@@ -155,10 +192,30 @@ export class ChatGPTApi implements LLMApi {
             const text = msg.data;
             try {
               const json = JSON.parse(text);
-              const delta = json.choices[0].delta.content;
-              if (delta) {
+              // console.log("[Request] openai response: ", json);
+              let delta: string = "";
+              let delta_arg: string = "";
+              if (json.choices[0].delta.function_call) {
+                const {
+                  arguments: _arguments,
+                  name: _function_name,
+                  content: _function_content,
+                } = json.choices[0].delta.function_call || {};
+                delta_arg = _arguments;
+                delta = _function_content;
+                if (_function_name) functionName = _function_name;
+              } else if (json.choices[0].delta.content) {
+                delta = json.choices[0].delta.content;
+              }
+              if (delta || delta_arg) {
                 responseText += delta;
-                options.onUpdate?.(responseText, delta);
+                functionArguments += delta_arg;
+                options.onUpdate?.({
+                  message: responseText,
+                  chunk: delta,
+                  function_name: functionName,
+                  function_arguments: functionArguments,
+                });
               }
             } catch (e) {
               console.error("[Request] parse error", text, msg);
@@ -178,14 +235,17 @@ export class ChatGPTApi implements LLMApi {
         clearTimeout(requestTimeoutId);
 
         const resJson = await res.json();
+        // TODO function call 接入 非Stream版本
+        console.log("[Request] openai response: ", resJson);
         const message = this.extractMessage(resJson);
-        options.onFinish(message);
+        options.onFinish({ message: message });
       }
     } catch (e) {
       console.log("[Request] failed to make a chat request", e);
       options.onError?.(e as Error);
     }
   }
+
   async usage() {
     const formatDate = (d: Date) =>
       `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}-${d
@@ -278,4 +338,5 @@ export class ChatGPTApi implements LLMApi {
     }));
   }
 }
+
 export { OpenaiPath };

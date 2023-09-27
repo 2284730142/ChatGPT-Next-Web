@@ -190,10 +190,10 @@
   animation: slide-in ease 0.3s;
 
   $linear: linear-gradient(
-    to right,
-    rgba(0, 0, 0, 0),
-    rgba(0, 0, 0, 1),
-    rgba(0, 0, 0, 0)
+                  to right,
+                  rgba(0, 0, 0, 0),
+                  rgba(0, 0, 0, 1),
+                  rgba(0, 0, 0, 0)
   );
   mask-image: $linear;
 
@@ -349,6 +349,7 @@
       padding: 7px;
     }
   }
+
   /* Specific styles for iOS devices */
   @media screen and (max-device-width: 812px) and (-webkit-min-device-pixel-ratio: 2) {
     @supports (-webkit-touch-callout: none) {
@@ -379,6 +380,31 @@
   border: var(--border-in-light);
   position: relative;
   transition: all ease 0.3s;
+
+  .chat-function-call-item {
+    margin: 4px 0px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    font-size: 14px;
+    color: #2576e0;
+  }
+
+  .chat-function-call-button {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background-color: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    display: flex;
+    align-items: center;
+    transition: 0.3s ease all;
+
+    &:hover {
+      background-color: #48bcc0;
+      color: #ffffff;
+    }
+  }
 }
 
 .chat-message-action-date {
@@ -460,6 +486,7 @@
 
       @include single-line();
     }
+
     .hint-content {
       font-size: 12px;
 

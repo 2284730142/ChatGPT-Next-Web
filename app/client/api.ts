@@ -1,9 +1,9 @@
 import { getClientConfig } from "../config/client";
-import { ACCESS_CODE_PREFIX } from "../constant";
+import { ACCESS_CODE_PREFIX, REQUEST_TIMEOUT_MS } from "../constant";
 import { ChatMessage, ModelType, useAccessStore } from "../store";
 import { ChatGPTApi } from "./platforms/openai";
 
-export const ROLES = ["system", "user", "assistant"] as const;
+export const ROLES = ["system", "user", "assistant", "function"] as const;
 export type MessageRole = (typeof ROLES)[number];
 
 export const Models = ["gpt-3.5-turbo", "gpt-4"] as const;
@@ -12,6 +12,13 @@ export type ChatModel = ModelType;
 export interface RequestMessage {
   role: MessageRole;
   content: string;
+  // role = function 有这个
+  name?: string;
+}
+
+export interface FunctionCall {
+  name: string;
+  arguments: string;
 }
 
 export interface LLMConfig {
@@ -27,8 +34,25 @@ export interface ChatOptions {
   messages: RequestMessage[];
   config: LLMConfig;
 
-  onUpdate?: (message: string, chunk: string) => void;
-  onFinish: (message: string) => void;
+  onUpdate?: ({
+    message,
+    chunk,
+    function_name,
+    function_arguments,
+  }: {
+    message: string;
+    chunk: string;
+    function_name?: FunctionCall["name"];
+    function_arguments?: FunctionCall["arguments"];
+  }) => void;
+  onFinish: ({
+    message,
+    function_name,
+  }: {
+    message: string;
+    function_name?: FunctionCall["name"];
+    function_arguments?: FunctionCall["arguments"];
+  }) => void;
   onError?: (err: Error) => void;
   onController?: (controller: AbortController) => void;
 }
@@ -45,7 +69,9 @@ export interface LLMModel {
 
 export abstract class LLMApi {
   abstract chat(options: ChatOptions): Promise<void>;
+
   abstract usage(): Promise<LLMUsage>;
+
   abstract models(): Promise<LLMModel[]>;
 }
 
@@ -82,6 +108,36 @@ export class ClientApi {
   prompts() {}
 
   masks() {}
+
+  async function_call({
+    name,
+    arguments: _arguments,
+  }: {
+    name: string;
+    arguments: string;
+  }) {
+    const requestPayload = {
+      name,
+      arguments: _arguments,
+    };
+    const controller = new AbortController();
+    const requestTimeoutId = setTimeout(
+      () => controller.abort(),
+      REQUEST_TIMEOUT_MS,
+    );
+    const payload = {
+      method: "POST",
+      body: JSON.stringify(requestPayload),
+      signal: controller.signal,
+      headers: getHeaders(),
+    };
+    const res = await fetch("/api/function_call", payload);
+    // make a fetch request
+    clearTimeout(requestTimeoutId);
+    const resJson = await res.json();
+    console.log("[Function Call] response: ", resJson);
+    return resJson;
+  }
 
   async share(messages: ChatMessage[], avatarUrl: string | null = null) {
     const msgs = messages
