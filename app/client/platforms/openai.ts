@@ -14,6 +14,7 @@ import {
 } from "@fortaine/fetch-event-source";
 import { prettyObject } from "@/app/utils/format";
 import { getClientConfig } from "@/app/config/client";
+import { usePluginStore } from "@/app/store/plugin";
 
 export interface OpenAIListModelResponse {
   object: string;
@@ -49,6 +50,7 @@ export class ChatGPTApi implements LLMApi {
   }
 
   async chat(options: ChatOptions) {
+    console.log("[Request] chat options: ", options);
     const messages = options.messages.map((v) => {
       // @ts-ignore
       if (v.function_call) {
@@ -74,6 +76,16 @@ export class ChatGPTApi implements LLMApi {
       },
     };
 
+    let functions: any[] = usePluginStore.getState().functions;
+    functions = functions
+      .map((f) => {
+        if (f.select) {
+          return f.function_params;
+        }
+        return null;
+      })
+      .filter((f) => !!f);
+
     const requestPayload = {
       messages,
       stream: options.config.stream,
@@ -82,24 +94,13 @@ export class ChatGPTApi implements LLMApi {
       presence_penalty: modelConfig.presence_penalty,
       frequency_penalty: modelConfig.frequency_penalty,
       top_p: modelConfig.top_p,
-      function_call: "auto",
-      functions: [
-        {
-          name: "get_current_weather",
-          description: "Get the current weather in a given location",
-          parameters: {
-            type: "object",
-            properties: {
-              location: {
-                type: "string",
-                description: "The city and state, e.g. San Francisco, CA",
-              },
-              unit: { type: "string", enum: ["celsius", "fahrenheit"] },
-            },
-            required: ["location"],
-          },
-        },
-      ],
+      // 可替换式插件plugin_center
+      ...(functions && functions.length > 0
+        ? {
+            function_call: "auto",
+            functions: functions,
+          }
+        : {}),
     };
 
     console.log("[Request] openai payload: ", requestPayload);
@@ -202,10 +203,10 @@ export class ChatGPTApi implements LLMApi {
                   content: _function_content,
                 } = json.choices[0].delta.function_call || {};
                 delta_arg = _arguments;
-                delta = _function_content;
+                delta = _function_content || "";
                 if (_function_name) functionName = _function_name;
               } else if (json.choices[0].delta.content) {
-                delta = json.choices[0].delta.content;
+                delta = json.choices[0].delta.content || "";
               }
               if (delta || delta_arg) {
                 responseText += delta;

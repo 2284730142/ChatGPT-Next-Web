@@ -173,7 +173,12 @@ export function SideBar(props: { className?: string }) {
           icon={<PluginIcon />}
           text={shouldNarrow ? undefined : Locale.Plugin.Name}
           className={styles["sidebar-bar-button"]}
-          onClick={() => showToast(Locale.WIP)}
+          onClick={() => {
+            // 待开发中
+            // showToast(Locale.WIP)
+            // 跳转到对应的插件管理界面
+            navigate(Path.Plugin, { state: { fromHome: true } });
+          }}
           shadow
         />
       </div>

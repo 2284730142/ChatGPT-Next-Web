@@ -1,5 +1,7 @@
 "use client";
 
+import { usePluginStore } from "@/app/store/plugin";
+
 require("../polyfill");
 
 import { useState, useEffect } from "react";
@@ -24,7 +26,7 @@ import {
   useLocation,
 } from "react-router-dom";
 import { SideBar } from "./sidebar";
-import { useAppConfig } from "../store/config";
+import { useAppConfig } from "@/app/store";
 import { AuthPage } from "./auth";
 import { getClientConfig } from "../config/client";
 import { api } from "../client/api";
@@ -52,6 +54,10 @@ const NewChat = dynamic(async () => (await import("./new-chat")).NewChat, {
 });
 
 const MaskPage = dynamic(async () => (await import("./mask")).MaskPage, {
+  loading: () => <Loading noLogo />,
+});
+
+const Plugin = dynamic(async () => (await import("./plugin")).Plugin, {
   loading: () => <Loading noLogo />,
 });
 
@@ -159,6 +165,7 @@ function Screen() {
               <Route path={Path.Masks} element={<MaskPage />} />
               <Route path={Path.Chat} element={<Chat />} />
               <Route path={Path.Settings} element={<Settings />} />
+              <Route path={Path.Plugin} element={<Plugin />} />
             </Routes>
           </div>
         </>
@@ -187,6 +194,8 @@ export function Home() {
   useEffect(() => {
     console.log("[Config] got config from build time", getClientConfig());
     useAccessStore.getState().fetch();
+    // 加载插件数据
+    usePluginStore.getState().fetch();
   }, []);
 
   if (!useHasHydrated()) {

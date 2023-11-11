@@ -28,8 +28,6 @@ export type ChatMessage = RequestMessage & {
   model?: ModelType;
   // function_call的存储
   function_call?: FunctionCall;
-  // 调用api返回的相应数据
-  function_response?: string;
 };
 
 export function createMessage(override: Partial<ChatMessage>): ChatMessage {
@@ -315,16 +313,10 @@ export const useChatStore = createPersistStore(
         const userContent = fillTemplateWith(content, modelConfig);
         console.log("[User Input] after template: ", userContent);
 
-        const userMessage: ChatMessage = !function_name
-          ? createMessage({
-              role: "user",
-              content: userContent,
-            })
-          : createMessage({
-              role: "function",
-              name: function_name,
-              content: function_response,
-            });
+        // function call 处理不在这里进行，放在最后比较合适
+        const userMessage: ChatMessage | null = !function_name
+          ? createMessage({ role: "user", content: userContent })
+          : null;
 
         const botMessage: ChatMessage = createMessage({
           role: "assistant",
@@ -336,7 +328,9 @@ export const useChatStore = createPersistStore(
 
         // get recent messages
         const recentMessages = get().getMessagesWithMemory();
-        const sendMessages = recentMessages.concat(userMessage);
+        const sendMessages = userMessage
+          ? recentMessages.concat(userMessage)
+          : recentMessages.concat([]);
         const messageIndex = get().currentSession().messages.length + 1;
 
         console.log(
@@ -346,16 +340,18 @@ export const useChatStore = createPersistStore(
         );
 
         // save user's and bot's message
-        get().updateCurrentSession((session) => {
-          const savedUserMessage = {
-            ...userMessage,
-            content,
-          };
-          session.messages = session.messages.concat([
-            savedUserMessage,
-            botMessage,
-          ]);
-        });
+        if (userMessage) {
+          get().updateCurrentSession((session) => {
+            const savedUserMessage = {
+              ...userMessage,
+              content,
+            };
+            session.messages = session.messages.concat([
+              savedUserMessage,
+              botMessage,
+            ]);
+          });
+        }
 
         // make request
         api.llm.chat({
@@ -363,6 +359,7 @@ export const useChatStore = createPersistStore(
           config: { ...modelConfig, stream: true },
           onUpdate({ message, function_name, function_arguments }) {
             botMessage.streaming = true;
+            // console.log("[User Input] onUpdate: ", message);
             if (message) {
               botMessage.content = message;
             }
@@ -400,7 +397,7 @@ export const useChatStore = createPersistStore(
                 message: error.message,
               });
             botMessage.streaming = false;
-            userMessage.isError = !isAborted;
+            if (userMessage) userMessage.isError = !isAborted;
             botMessage.isError = !isAborted;
             get().updateCurrentSession((session) => {
               session.messages = session.messages.concat();

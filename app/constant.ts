@@ -18,6 +18,7 @@ export enum Path {
   NewChat = "/new-chat",
   Masks = "/masks",
   Auth = "/auth",
+  Plugin = "/plugin",
 }
 
 export enum ApiPath {
@@ -41,6 +42,7 @@ export enum StoreKey {
   Prompt = "prompt-store",
   Update = "chat-update",
   Sync = "sync",
+  Plugin = "gpt-plugin",
 }
 
 export const DEFAULT_SIDEBAR_WIDTH = 300;

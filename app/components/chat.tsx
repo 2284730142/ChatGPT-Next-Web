@@ -27,6 +27,7 @@ import PinIcon from "../icons/pin.svg";
 import EditIcon from "../icons/rename.svg";
 import ConfirmIcon from "../icons/confirm.svg";
 import CancelIcon from "../icons/cancel.svg";
+import PluginIcon from "../icons/plugin.svg";
 
 import LightIcon from "../icons/light.svg";
 import DarkIcon from "../icons/dark.svg";
@@ -92,6 +93,7 @@ import { ExportMessageModal } from "./exporter";
 import { getClientConfig } from "../config/client";
 import { api } from "@/app/client/api";
 import { Loading } from "@/app/components/home";
+import { usePluginStore } from "@/app/store/plugin";
 
 const Markdown = dynamic(async () => (await import("./markdown")).Markdown, {
   loading: () => <LoadingIcon />,
@@ -519,6 +521,14 @@ export function ChatActions(props: {
         icon={<RobotIcon />}
       />
 
+      <ChatAction
+        text={"插件配置"}
+        icon={<PluginIcon />}
+        onClick={() => {
+          navigate(Path.Plugin, { state: { fromHome: true } });
+        }}
+      />
+
       {showModelSelector && (
         <Selector
           defaultSelectedValue={currentModel}
@@ -613,6 +623,8 @@ function _Chat() {
   // console.log('当前session：\n', session);
   const config = useAppConfig();
   const fontSize = config.fontSize;
+  const pluginStore = usePluginStore();
+  const functions = pluginStore.functions;
 
   const [showExport, setShowExport] = useState(false);
 
@@ -962,7 +974,7 @@ function _Chat() {
     return renderMessages.slice(msgRenderIndex, endRenderIndex);
   }, [msgRenderIndex, renderMessages]);
 
-  console.log("[Chat] render messages: ", messages);
+  // console.log("[Chat] render messages: ", messages);
 
   const onChatBodyScroll = (e: HTMLElement) => {
     const bottomHeight = e.scrollTop + e.clientHeight;
@@ -1085,13 +1097,13 @@ function _Chat() {
         .concat(session.messages)
         .find((m) => m.id === id);
       if (m && m.function_call && m.function_call.name) {
-        m.function_response = JSON.stringify(call, null, 4);
+        m.content = JSON.stringify(call, null, 4);
         // 执行GPT
         doSubmit({
           userInput: JSON.stringify(call, null, 4),
           function_name: m.function_call.name,
           function_arguments: m.function_call.arguments,
-          function_response: m.function_response,
+          function_response: m.content,
         });
       }
     });
@@ -1202,6 +1214,21 @@ function _Chat() {
 
           const shouldShowClearContextDivider = i === clearContextIndex - 1;
 
+          let content = "";
+          if (isFunction) {
+            // console.log("函数调用：", message);
+            content =
+              "```\n" +
+              (message.content && isJson(message.content)
+                ? message.content
+                : message?.function_call?.arguments || "") +
+              "\n```";
+          } else {
+            content = isJson(message.content)
+              ? "```\n" + message.content + "\n```"
+              : message.content;
+          }
+
           return (
             <Fragment key={message.id}>
               <div
@@ -1311,14 +1338,7 @@ function _Chat() {
                   )}
                   <div className={styles["chat-message-item"]}>
                     <Markdown
-                      content={
-                        isFunction
-                          ? "```\n" + message?.function_call?.arguments ||
-                            "" + "\n```"
-                          : isJson(message.content)
-                          ? "```\n" + message.content + "\n```"
-                          : message.content
-                      }
+                      content={content}
                       loading={
                         (message.preview || message.streaming) &&
                         message.content.length === 0 &&
@@ -1336,10 +1356,14 @@ function _Chat() {
                     {isFunction && (
                       <>
                         <div className={styles["chat-function-call-item"]}>
-                          {!message?.function_response ? "即将运行" : ""}函数：
-                          {message?.function_call?.name || ""}
+                          {!message?.content ? "即将运行" : ""}插件：
+                          {message?.function_call?.name
+                            ? pluginStore.getFunctionName(
+                                message?.function_call?.name,
+                              )
+                            : ""}
                         </div>
-                        {!message?.function_response && (
+                        {!message?.content && (
                           <>
                             {call_function_loading ? (
                               <Loading />
