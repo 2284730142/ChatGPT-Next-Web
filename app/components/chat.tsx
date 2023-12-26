@@ -449,8 +449,7 @@ export function ChatActions(props: {
       );
       showToast(nextModel);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentModel, models]);
+  }, [chatStore, currentModel, models]);
 
   return (
     <div className={styles["chat-input-actions"]}>
@@ -1176,7 +1175,12 @@ function _Chat() {
                           {["system"].includes(message.role) ? (
                             <Avatar avatar="2699-fe0f" />
                           ) : (
-                            <MaskAvatar mask={session.mask} />
+                            <MaskAvatar
+                              avatar={session.mask.avatar}
+                              model={
+                                message.model || session.mask.modelConfig.model
+                              }
+                            />
                           )}
                         </>
                       )}
